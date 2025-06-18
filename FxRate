@@ -2,6 +2,7 @@ import pandas as pd
 from sqlalchemy import create_engine, Column, String, Boolean, Integer, Float
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
+import sys
 import os
 
 # 0.環境変数から接続情報を読み込む
@@ -20,54 +21,76 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 class FxRate(Base):
-    __tablename__ = 'FxRate'  # DBのテーブル名
-    __table_args__ = {'schema': 'master'} # スキーマを指定
-
+    __tablename__ = 'FxRate'
+    __table_args__ = {'schema': 'master'}
     fx_id = Column(String(100), primary_key=True)
     fiscal_year = Column(Integer)
     usd_jpy_rate = Column(Float)
-   
-# 3. マスターCSVファイルを読み込む
+
+# 2. マスターCSVファイルを読み込む
+CSV_FILE_PATH = 'fxrate_master.csv' 
 try:
-    df = pd.read_csv('fxrate_master.csv')
+    df_fxrate = pd.read_csv(CSV_FILE_PATH)
 except FileNotFoundError:
-    print("エラー: fxrate_master.csv が見つかりません。")
-    exit()
+    print(f"エラー: {CSV_FILE_PATH} が見つかりません。")
+    sys.exit(1) # エラーコード1で終了
+
+# ===【ここが追加された安全チェック】===
+# DataFrameが空（行数が0）かどうかをチェック
+if df_fxrate.empty:
+    print("警告: {CSV_FILE_PATH}  ファイルが空か、ヘッダーしかありません。")
+    print("テーブルの全データが削除されるのを防ぐため、処理を中断します。")
+    sys.exit(0) # 正常終了としてコード0で終了
+# ====================================
+
+# 3. CSVに存在するIDのリスト（Set）を作成する
+csv_ids = set(df_fxrate['fx_id'])
+print(f"CSVに存在するIDの数: {len(csv_ids)}")
+
 
 # 4. セッションを開始して同期処理を実行
 session = SessionLocal()
 try:
-    for index, row in df.iterrows():
-        # CSVのIDをキーに、DBから既存のセグメントを検索
-        segment = session.query(FxRate).filter(FxRate.fx_id == row['fx_id']).first()
-
-        if segment:
-            # --- UPDATE処理 ---
-            # 既に存在する場合、名前を更新する（Pythonオブジェクトの属性を書き換えるだけ！）
-            print(f"Updating: {row['fx_id']}")
-            segment.fiscal_year = row['fiscal_year']
-            segment.usd_jpy_rate = row['usd_jpy_rate']
-           
+    # --- ステップ1: UPSERT処理 ---
+    for index, row in df_fxrate.iterrows():
+        fx_rate_obj = session.query(FxRate).filter(FxRate.fx_id == row['fx_id']).first()
+        if fx_rate_obj:
+            # UPDATE
+            fx_rate_obj.fiscal_year = row['fiscal_year']
+            fx_rate_obj.usd_jpy_rate = row['usd_jpy_rate']
         else:
-            # --- INSERT処理 ---
-            # 存在しない場合、新しいオブジェクトを作成してセッションに追加する
-            print(f"Inserting: {row['fx_id']}")
-            new_segment = FxRate(
+            # INSERT
+            new_fx_rate = FxRate(
                 fx_id=row['fx_id'],
-                fiscal_year = row['fiscal_year'],
-                usd_jpy_rate = row['usd_jpy_rate'],
+                fiscal_year=row['fiscal_year'],
+                usd_jpy_rate=row['usd_jpy_rate']
             )
-            session.add(new_segment)
+            session.add(new_fx_rate)
+
+    # --- ステップ2: 削除処理 ---
+    # DBに存在するすべてのレコードを取得
+    db_fx_rates = session.query(FxRate).all()
     
-    # 5. すべての変更をまとめてデータベースにコミット（書き込み）
+    # 削除対象のレコードを記録するカウンター
+    delete_count = 0
+    for db_rate in db_fx_rates:
+        if db_rate.fx_id not in csv_ids:
+            print(f"削除対象: {db_rate.fx_id}")
+            session.delete(db_rate)
+            delete_count += 1
+    
+    if delete_count > 0:
+        print(f"{delete_count}件のレコードが削除されます。")
+
+    # 5. すべての変更（INSERT, UPDATE, DELETE）をまとめてDBにコミット
     session.commit()
-    print("FxRateテーブルの同期が完了しました。")
+    print("FxRateテーブルの完全同期が完了しました。")
 
 except Exception as e:
-    # エラーが発生した場合、すべての変更をロールバック（キャンセル）
     print(f"エラーが発生しました。変更をロールバックします: {e}")
     session.rollback()
-
+    sys.exit(1) # エラーコード1で終了
 finally:
-    # 処理が成功しても失敗しても、必ずセッションを閉じる
     session.close()
+
+print("処理が正常に終了しました。")
