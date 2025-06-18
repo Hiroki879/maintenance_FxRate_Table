@@ -71,3 +71,5 @@ except Exception as e:
 finally:
     # 処理が成功しても失敗しても、必ずセッションを閉じる
     session.close()
+
+    test
