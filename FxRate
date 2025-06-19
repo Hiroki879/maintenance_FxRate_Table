@@ -27,7 +27,7 @@ class FxRate(Base):
     fiscal_year = Column(Integer)
     usd_jpy_rate = Column(Float)
 
-# 2. マスターCSVファイルを読み込む
+# 3. マスターCSVファイルを読み込む
 CSV_FILE_PATH = 'fxrate_master.csv' 
 try:
     df_fxrate = pd.read_csv(CSV_FILE_PATH)
@@ -43,12 +43,12 @@ if df_fxrate.empty:
     sys.exit(0) # 正常終了としてコード0で終了
 # ====================================
 
-# 3. CSVに存在するIDのリスト（Set）を作成する
+# 4. CSVに存在するIDのリスト（Set）を作成する
 csv_ids = set(df_fxrate['fx_id'])
 print(f"CSVに存在するIDの数: {len(csv_ids)}")
 
 
-# 4. セッションを開始して同期処理を実行
+# 5. セッションを開始して同期処理を実行
 session = SessionLocal()
 try:
     # --- ステップ1: UPSERT処理 ---
@@ -82,7 +82,7 @@ try:
     if delete_count > 0:
         print(f"{delete_count}件のレコードが削除されます。")
 
-    # 5. すべての変更（INSERT, UPDATE, DELETE）をまとめてDBにコミット
+    # 6. すべての変更（INSERT, UPDATE, DELETE）をまとめてDBにコミット
     session.commit()
     print("FxRateテーブルの完全同期が完了しました。")
 
